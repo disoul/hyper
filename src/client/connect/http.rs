@@ -81,6 +81,9 @@ struct Config {
     reuse_address: bool,
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
+
+    device: Option<[u8; 32]>,
+    device_len: usize,
 }
 
 // ===== impl HttpConnector =====
@@ -121,6 +124,9 @@ impl<R> HttpConnector<R> {
                 reuse_address: false,
                 send_buffer_size: None,
                 recv_buffer_size: None,
+
+                device: None,
+                device_len: 0,
             }),
             resolver,
         }
@@ -150,6 +156,20 @@ impl<R> HttpConnector<R> {
     #[inline]
     pub fn set_nodelay(&mut self, nodelay: bool) {
         self.config_mut().nodelay = nodelay;
+    }
+
+    /// Set socket bind device
+    /// 
+    /// Default is ""
+    #[inline]
+    pub fn set_device(&mut self, device_str: &str) {
+        let mut device: [u8; 32] = [0; 32];
+
+        for (index, char) in device_str.chars().enumerate() {
+            device[index] = char as u8;
+        }
+        self.config_mut().device.replace(device);
+        self.config_mut().device_len = device_str.len();
     }
 
     /// Sets the value of the SO_SNDBUF option on the socket.
@@ -606,6 +626,13 @@ fn connect(
         .set_nonblocking(true)
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
+    if let Some(device) = config.device {
+        let device_vec: Vec<u8> = device.iter().take(config.device_len).copied().collect();
+        socket
+            .bind_device(Some(device_vec.as_slice()))
+            .map_err(ConnectError::m("bind device error"))?;
+    }
+
     if let Some(dur) = config.keep_alive_timeout {
         let conf = TcpKeepalive::new().with_time(dur);
         if let Err(e) = socket.set_tcp_keepalive(&conf) {
@@ -942,6 +969,8 @@ mod tests {
                         enforce_http: false,
                         send_buffer_size: None,
                         recv_buffer_size: None,
+                        device: None,
+                        device_len: 0,
                     };
                     let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(addrs), &cfg);
                     let start = Instant::now();
